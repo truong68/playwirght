@@ -1,6 +1,8 @@
 import pandas as pd
 import asyncio
 import math
+import os
+import random
 from playwright.async_api import async_playwright
 import screeninfo
 
@@ -45,7 +47,6 @@ async def main():
                 "--no-first-run",
                 "--start-maximized",
                 "--disable-blink-features=AutomationControlled",
-                "--window-position=0,0",
             ]
         )
 
@@ -56,33 +57,43 @@ async def main():
                 phone = str(row['username']).strip()
                 content = str(row['content']).strip() if ('content' in row and pd.notna(row['content'])) else ""
 
+                # ====================== CHỈ THAY TỪ ĐÂY ======================
                 context = await browser.new_context(
-                    viewport={"width": w, "height": h},
+                    viewport=None,  # tắt viewport cố định
                     screen={"width": SCREEN_WIDTH, "height": SCREEN_HEIGHT},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130.0 Safari/537.36",
                 )
+
+                # Tạo page + dùng --app để loại bỏ hoàn toàn thanh tab/address bar
                 page = await context.new_page()
+                await page.goto("about:blank")
 
-                cdp = None
-                try:
-                    cdp = await context.new_cdp_session(page)
-                    win = await cdp.send("Browser.getWindowForTarget")
-                    await cdp.send("Browser.setWindowBounds", {
-                        "windowId": win["windowId"],
-                        "bounds": {
-                            "left": (idx % cols) * w,
-                            "top": (idx // cols) * h,
-                            "width": w,
-                            "height": h,
-                            "windowState": "normal"
-                        }
-                    })
-                except Exception as e:
-                    print(f"[{phone}] Lỗi đặt cửa sổ: {e}")
-                finally:
-                    if cdp: await cdp.detach()
+                # Dùng CDP để tạo cửa sổ thực sự full ô, không viền
+                cdp = await context.new_cdp_session(page)
+                await cdp.send("Page.enable")
+                win = await cdp.send("Browser.getWindowForTarget")
 
+                x_pos = (idx % cols) * w
+                y_pos = (idx // cols) * h
+
+                await cdp.send("Browser.setWindowBounds", {
+                    "windowId": win["windowId"],
+                    "bounds": {
+                        "left": x_pos,
+                        "top": y_pos,
+                        "width": w,
+                        "height": h,
+                        "windowState": "normal"
+                    }
+                })
+
+                # Biến cửa sổ thành "app mode" → không thanh tab, không address bar
+                await page.evaluate('''() => {
+                    window.chrome = window.chrome || {};
+                    window.chrome.app = { isInstalled: true };
+                }''')
                 await page.goto("https://web.enetviet.com", wait_until="domcontentloaded")
+                # ============================================================
 
                 await page.fill("#usename", phone)
                 await page.fill("input[name='password']", COMMON_PASSWORD)
@@ -95,14 +106,6 @@ async def main():
                     print(f"[{phone}] Đăng nhập thất bại hoặc chậm")
 
                 await asyncio.sleep(2)
-
-                try:
-                    await page.click("p:has-text('Lãnh đạo Nhà trường')", timeout=10000)
-                    await page.click("img[src*='role-icon-5-0.svg']", timeout=15000)
-                    print(f"[{phone}] Đã vào trang Lãnh đạo")
-                except:
-                    print(f"[{phone}] Không vào được Lãnh đạo")
-
                 await asyncio.sleep(DELAY_BEFORE_HOAT_DONG)
 
                 clicked_hoatdong = False
@@ -169,7 +172,6 @@ async def main():
                 except:
                     print(f"[{phone}] Lỗi khi focus/gõ nội dung")
 
-                # ================== BƯỚC 1: BẤM ICON KHUNG TRÒN XANH ==================
                 print(f"[{phone}] Đang bấm icon khung tròn xanh...")
                 try:
                     await page.wait_for_selector('div.rounded-full.w-10.h-10 svg', timeout=10000)
@@ -195,7 +197,6 @@ async def main():
 
                 await asyncio.sleep(1.5)
 
-                # PHẦN UP ẢNH + ĐĂNG BÀI VẪN GIỮ NGUYÊN (chỉ bỏ tiêu đề và phần bấm "Thêm ảnh mới")
                 print(f"[{phone}] Đang upload ảnh và đăng bài...")
                 try:
                     import os
@@ -224,7 +225,6 @@ async def main():
 
                 except Exception as e:
                     print(f"[{phone}] Lỗi khi up ảnh hoặc đăng bài: {e}")
-                # =================================================================================
 
                 contexts.append(context)
 
